@@ -776,14 +776,14 @@ void FTPServer::start_file_download(int client_socket, const std::string& path) 
     bytes_read = next_bytes;
 }
 
-close(file_fd);
-close(data_socket);
-close_data_connection(client_socket);
-send_response(client_socket, 226, "Transfer complete");
+  close(file_fd);
+  close(data_socket);
+  close_data_connection(client_socket);
+  send_response(client_socket, 226, "Transfer complete");
 }
 
 bool FTPServer::is_running() const {
-return ftp_server_socket_ != -1;
+  return ftp_server_socket_ != -1;
 }
 
 }  // namespace ftp_server
