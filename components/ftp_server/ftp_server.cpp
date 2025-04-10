@@ -754,7 +754,7 @@ void FTPServer::start_file_download(int client_socket, const std::string& path) 
   }
 
   // Implementation du double buffer
-  const size_t BUFFER_SIZE = 8192;
+  const size_t BUFFER_SIZE = 2048;
   char buffer1[BUFFER_SIZE];
   char buffer2[BUFFER_SIZE];
   char* read_buffer = buffer1;
