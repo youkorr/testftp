@@ -54,7 +54,7 @@ std::string normalize_path(const std::string& base_path, const std::string& path
 }
 
 void FTPServer::setup() {
-  ESP_LOGI(TAG, "Setting up FTP server...");
+  ESP_LOGI(TAG, "Setting up FTP server on port %d...", port_);
 
   if (root_path_.empty()) {
     root_path_ = "/";
@@ -66,11 +66,11 @@ void FTPServer::setup() {
 
   DIR *dir = opendir(root_path_.c_str());
   if (dir == nullptr) {
-    ESP_LOGE(TAG, "Root directory %s does not exist or is not accessible (errno: %d)", 
-             root_path_.c_str(), errno);
+    ESP_LOGE(TAG, "Root directory %s does not exist or is not accessible (errno: %d - %s)", 
+             root_path_.c_str(), errno, strerror(errno));
     if (mkdir(root_path_.c_str(), 0755) != 0) {
-      ESP_LOGE(TAG, "Failed to create root directory %s (errno: %d)", 
-               root_path_.c_str(), errno);
+      ESP_LOGE(TAG, "Failed to create root directory %s (errno: %d - %s)", 
+               root_path_.c_str(), errno, strerror(errno));
     } else {
       ESP_LOGI(TAG, "Created root directory %s", root_path_.c_str());
       dir = opendir(root_path_.c_str());
@@ -84,15 +84,21 @@ void FTPServer::setup() {
              root_path_.c_str());
   }
 
+  // Close any existing socket
+  if (ftp_server_socket_ >= 0) {
+    close(ftp_server_socket_);
+    ftp_server_socket_ = -1;
+  }
+
   ftp_server_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (ftp_server_socket_ < 0) {
-    ESP_LOGE(TAG, "Failed to create FTP server socket (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to create FTP server socket (errno: %d - %s)", errno, strerror(errno));
     return;
   }
 
   int opt = 1;
   if (setsockopt(ftp_server_socket_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    ESP_LOGE(TAG, "Failed to set socket options (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to set socket options (errno: %d - %s)", errno, strerror(errno));
     close(ftp_server_socket_);
     ftp_server_socket_ = -1;
     return;
@@ -103,23 +109,32 @@ void FTPServer::setup() {
   server_addr.sin_family = AF_INET;
   server_addr.sin_port = htons(port_);
   server_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+  
+  // Ensure clean binding
   if (bind(ftp_server_socket_, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-    ESP_LOGE(TAG, "Failed to bind FTP server socket (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to bind FTP server socket (errno: %d - %s)", errno, strerror(errno));
     close(ftp_server_socket_);
     ftp_server_socket_ = -1;
     return;
   }
 
   if (listen(ftp_server_socket_, 5) < 0) {
-    ESP_LOGE(TAG, "Failed to listen on FTP server socket (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to listen on FTP server socket (errno: %d - %s)", errno, strerror(errno));
     close(ftp_server_socket_);
     ftp_server_socket_ = -1;
     return;
   }
 
-  fcntl(ftp_server_socket_, F_SETFL, O_NONBLOCK);
+  // Make sure socket is non-blocking
+  int flags = fcntl(ftp_server_socket_, F_GETFL, 0);
+  if (flags < 0 || fcntl(ftp_server_socket_, F_SETFL, flags | O_NONBLOCK) < 0) {
+    ESP_LOGE(TAG, "Failed to set non-blocking mode (errno: %d - %s)", errno, strerror(errno));
+  }
 
-  ESP_LOGI(TAG, "FTP server started on port %d", port_);
+  // Small delay to ensure socket is ready
+  delay(100);
+
+  ESP_LOGI(TAG, "FTP server started successfully on port %d", port_);
   ESP_LOGI(TAG, "Root directory: %s", root_path_.c_str());
   current_path_ = root_path_;
 }
@@ -144,7 +159,14 @@ void FTPServer::handle_new_clients() {
   socklen_t client_len = sizeof(client_addr);
   int client_socket = accept(ftp_server_socket_, (struct sockaddr *)&client_addr, &client_len);
   if (client_socket >= 0) {
-    fcntl(client_socket, F_SETFL, O_NONBLOCK);
+    // Make sure client socket is non-blocking
+    int flags = fcntl(client_socket, F_GETFL, 0);
+    if (flags != -1) {
+      fcntl(client_socket, F_SETFL, flags | O_NONBLOCK);
+    } else {
+      ESP_LOGW(TAG, "Failed to get socket flags (errno: %d - %s)", errno, strerror(errno));
+    }
+    
     char client_ip[INET_ADDRSTRLEN];
     inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
     ESP_LOGI(TAG, "New FTP client connected from %s:%d", client_ip, ntohs(client_addr.sin_port));
@@ -152,7 +174,17 @@ void FTPServer::handle_new_clients() {
     client_states_.push_back(FTP_WAIT_LOGIN);
     client_usernames_.push_back("");
     client_current_paths_.push_back(root_path_);
-    send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
+    
+    // Send welcome message immediately and verify success
+    std::string welcome_msg = "220 Welcome to ESPHome FTP Server\r\n";
+    int res = send(client_socket, welcome_msg.c_str(), welcome_msg.length(), 0);
+    if (res < 0) {
+      ESP_LOGE(TAG, "Failed to send welcome message (errno: %d - %s)", errno, strerror(errno));
+    } else {
+      ESP_LOGI(TAG, "Sent welcome message: %s", welcome_msg.c_str());
+    }
+  } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
+    ESP_LOGW(TAG, "Accept error: %d - %s", errno, strerror(errno));
   }
 }
 
@@ -175,7 +207,7 @@ void FTPServer::handle_ftp_client(int client_socket) {
       client_current_paths_.erase(client_current_paths_.begin() + index);
     }
   } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
-    ESP_LOGW(TAG, "Socket error: %d", errno);
+    ESP_LOGW(TAG, "Socket error: %d - %s", errno, strerror(errno));
   }
 }
 
@@ -252,7 +284,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
         client_current_paths_[client_index] = full_path;
         send_response(client_socket, 250, "Directory successfully changed");
       } else {
-        ESP_LOGE(TAG, "Failed to open directory: %s (errno: %d)", full_path.c_str(), errno);
+        ESP_LOGE(TAG, "Failed to open directory: %s (errno: %d - %s)", full_path.c_str(), errno, strerror(errno));
         send_response(client_socket, 550, "Failed to change directory");
       }
     }
@@ -352,7 +384,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
         send_response(client_socket, 550, "Not a regular file");
       }
     } else {
-      ESP_LOGE(TAG, "File not found: %s (errno: %d)", full_path.c_str(), errno);
+      ESP_LOGE(TAG, "File not found: %s (errno: %d - %s)", full_path.c_str(), errno, strerror(errno));
       send_response(client_socket, 550, "File not found");
     }
   } else if (cmd_str.find("DELE") == 0) {
@@ -368,7 +400,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
     if (unlink(full_path.c_str()) == 0) {
       send_response(client_socket, 250, "File deleted successfully");
     } else {
-      ESP_LOGE(TAG, "Failed to delete file: %s (errno: %d)", full_path.c_str(), errno);
+      ESP_LOGE(TAG, "Failed to delete file: %s (errno: %d - %s)", full_path.c_str(), errno, strerror(errno));
       send_response(client_socket, 550, "Failed to delete file");
     }
   } else if (cmd_str.find("MKD") == 0) {
@@ -384,7 +416,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
     if (mkdir(full_path.c_str(), 0755) == 0) {
       send_response(client_socket, 257, "Directory created");
     } else {
-      ESP_LOGE(TAG, "Failed to create directory: %s (errno: %d)", full_path.c_str(), errno);
+      ESP_LOGE(TAG, "Failed to create directory: %s (errno: %d - %s)", full_path.c_str(), errno, strerror(errno));
       send_response(client_socket, 550, "Failed to create directory");
     }
   } else if (cmd_str.find("RMD") == 0) {
@@ -400,7 +432,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
     if (rmdir(full_path.c_str()) == 0) {
       send_response(client_socket, 250, "Directory removed");
     } else {
-      ESP_LOGE(TAG, "Failed to remove directory: %s (errno: %d)", full_path.c_str(), errno);
+      ESP_LOGE(TAG, "Failed to remove directory: %s (errno: %d - %s)", full_path.c_str(), errno, strerror(errno));
       send_response(client_socket, 550, "Failed to remove directory");
     }
   } else if (cmd_str.find("RNFR") == 0) {
@@ -415,7 +447,7 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
     if (stat(rename_from_.c_str(), &file_stat) == 0) {
       send_response(client_socket, 350, "Ready for RNTO");
     } else {
-      ESP_LOGE(TAG, "File not found for rename: %s (errno: %d)", rename_from_.c_str(), errno);
+      ESP_LOGE(TAG, "File not found for rename: %s (errno: %d - %s)", rename_from_.c_str(), errno, strerror(errno));
       send_response(client_socket, 550, "File not found");
       rename_from_ = "";
     }
@@ -435,8 +467,8 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
       if (rename(rename_from_.c_str(), rename_to.c_str()) == 0) {
         send_response(client_socket, 250, "Rename successful");
       } else {
-        ESP_LOGE(TAG, "Failed to rename: %s -> %s (errno: %d)", 
-                 rename_from_.c_str(), rename_to.c_str(), errno);
+        ESP_LOGE(TAG, "Failed to rename: %s -> %s (errno: %d - %s)", 
+                 rename_from_.c_str(), rename_to.c_str(), errno, strerror(errno));
         send_response(client_socket, 550, "Rename failed");
       }
       rename_from_ = "";
@@ -492,8 +524,13 @@ void FTPServer::process_command(int client_socket, const std::string& command) {
 
 void FTPServer::send_response(int client_socket, int code, const std::string& message) {
   std::string response = std::to_string(code) + " " + message + "\r\n";
-  send(client_socket, response.c_str(), response.length(), 0);
-  ESP_LOGD(TAG, "Sent: %s", response.c_str());
+  int res = send(client_socket, response.c_str(), response.length(), 0);
+  if (res < 0) {
+    ESP_LOGE(TAG, "Failed to send response (code: %d, message: %s) - error: %d - %s", 
+             code, message.c_str(), errno, strerror(errno));
+  } else {
+    ESP_LOGD(TAG, "Sent response: %d %s", code, message.c_str());
+  }
 }
 
 bool FTPServer::authenticate(const std::string& username, const std::string& password) {
@@ -508,13 +545,13 @@ bool FTPServer::start_passive_mode(int client_socket) {
 
   passive_data_socket_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
   if (passive_data_socket_ < 0) {
-    ESP_LOGE(TAG, "Failed to create passive data socket (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to create passive data socket (errno: %d - %s)", errno, strerror(errno));
     return false;
   }
 
   int opt = 1;
   if (setsockopt(passive_data_socket_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    ESP_LOGE(TAG, "Failed to set socket options for passive mode (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to set socket options for passive mode (errno: %d - %s)", errno, strerror(errno));
     close(passive_data_socket_);
     passive_data_socket_ = -1;
     return false;
@@ -527,23 +564,14 @@ bool FTPServer::start_passive_mode(int client_socket) {
   data_addr.sin_port = htons(0);
 
   if (bind(passive_data_socket_, (struct sockaddr *)&data_addr, sizeof(data_addr)) < 0) {
-    ESP_LOGE(TAG, "Failed to bind passive data socket (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to bind passive data socket (errno: %d - %s)", errno, strerror(errno));
     close(passive_data_socket_);
     passive_data_socket_ = -1;
     return false;
   }
 
   if (listen(passive_data_socket_, 1) < 0) {
-    ESP_LOGE(TAG, "Failed to listen on passive data socket (errno: %d)", errno);
-    close(passive_data_socket_);
-    passive_data_socket_ = -1;
-    return false;
-  }
-
-  struct sockaddr_in sin;
-  socklen_t len = sizeof(sin);
-  if (getsockname(passive_data_socket_, (struct sockaddr *)&sin, &len) < 0) {
-    ESP_LOGE(TAG, "Failed to get socket name (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to listen on passive data socket (errno: %d - %s)", errno, strerror(errno));
     close(passive_data_socket_);
     passive_data_socket_ = -1;
     return false;
