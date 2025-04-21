@@ -182,12 +182,12 @@ void FTPServer::handle_new_clients() {
   client_states_.push_back(FTP_WAIT_LOGIN);
   client_usernames_.push_back("");
   client_current_paths_.push_back(root_path_);
-  client_last_activity_.push_back(esphome::hal::millis());  // Use fully qualified namespace
+  client_last_activity_.push_back(esp_timer_get_time() / 1000);  // Convert microseconds to milliseconds
   send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
 }
 
 void FTPServer::cleanup_inactive_clients() {
-  uint32_t current_time = esphome::hal::millis();  // Use fully qualified namespace
+  uint64_t current_time = esp_timer_get_time() / 1000;  // Convert microseconds to milliseconds
   
   for (size_t i = 0; i < client_sockets_.size(); i++) {
     if (current_time - client_last_activity_[i] > CLIENT_TIMEOUT) {
@@ -206,7 +206,7 @@ void FTPServer::handle_ftp_client(int client_socket) {
   auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
   if (it != client_sockets_.end()) {
     size_t index = it - client_sockets_.begin();
-    client_last_activity_[index] = esphome::hal::millis();  // Use fully qualified namespace
+    client_last_activity_[index] = esp_timer_get_time() / 1000;  // Convert microseconds to milliseconds
   }
   
   if (len > 0) {
