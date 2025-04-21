@@ -560,7 +560,6 @@ bool FTPServer::start_passive_mode(int client_socket) {
 
   passive_data_port_ = 2121;
 
-  uint32_t ip = ip_info.ip.addr;
   std::string response = "Entering Passive Mode (" +
                         std::to_string((ip & 0xFF)) + "," +
                         std::to_string((ip >> 8) & 0xFF) + "," +
