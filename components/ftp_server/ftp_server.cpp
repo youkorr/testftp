@@ -532,7 +532,7 @@ bool FTPServer::start_passive_mode(int client_socket) {
 
   int opt = 1;
   if (setsockopt(passive_data_socket_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt)) < 0) {
-    ESP_LOGE(TAG, "Failed to set socket options (errno: %d)", errno);
+    ESP_LOGE(TAG, "Failed to set socket options for passive mode (errno: %d)", errno);
     close(passive_data_socket_);
     passive_data_socket_ = -1;
     return false;
@@ -542,7 +542,7 @@ bool FTPServer::start_passive_mode(int client_socket) {
   memset(&data_addr, 0, sizeof(data_addr));
   data_addr.sin_family = AF_INET;
   data_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  data_addr.sin_port = htons(2121);  // ✅ Port passif fixe à rediriger sur ton routeur
+  data_addr.sin_port = htons(0);
 
   if (bind(passive_data_socket_, (struct sockaddr *)&data_addr, sizeof(data_addr)) < 0) {
     ESP_LOGE(TAG, "Failed to bind passive data socket (errno: %d)", errno);
@@ -558,8 +558,33 @@ bool FTPServer::start_passive_mode(int client_socket) {
     return false;
   }
 
-  passive_data_port_ = 2121;
+  struct sockaddr_in sin;
+  socklen_t len = sizeof(sin);
+  if (getsockname(passive_data_socket_, (struct sockaddr *)&sin, &len) < 0) {
+    ESP_LOGE(TAG, "Failed to get socket name (errno: %d)", errno);
+    close(passive_data_socket_);
+    passive_data_socket_ = -1;
+    return false;
+  }
 
+  passive_data_port_ = ntohs(sin.sin_port);
+
+  esp_netif_t *netif = esp_netif_get_default_netif();
+  if (netif == nullptr) {
+    ESP_LOGE(TAG, "Failed to get default netif");
+    close(passive_data_socket_);
+    passive_data_socket_ = -1;
+    return false;
+  }
+  esp_netif_ip_info_t ip_info;
+  if (esp_netif_get_ip_info(netif, &ip_info) != ESP_OK) {
+    ESP_LOGE(TAG, "Failed to get IP info");
+    close(passive_data_socket_);
+    passive_data_socket_ = -1;
+    return false;
+  }
+
+  uint32_t ip = ip_info.ip.addr;
   std::string response = "Entering Passive Mode (" +
                         std::to_string((ip & 0xFF)) + "," +
                         std::to_string((ip >> 8) & 0xFF) + "," +
