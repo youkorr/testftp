@@ -142,40 +142,81 @@ void FTPServer::dump_config() {
 void FTPServer::handle_new_clients() {
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
+  
+  // Add error checking for accept()
   int client_socket = accept(ftp_server_socket_, (struct sockaddr *)&client_addr, &client_len);
-  if (client_socket >= 0) {
-    fcntl(client_socket, F_SETFL, O_NONBLOCK);
-    char client_ip[INET_ADDRSTRLEN];
-    inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
-    ESP_LOGI(TAG, "New FTP client connected from %s:%d", client_ip, ntohs(client_addr.sin_port));
-    client_sockets_.push_back(client_socket);
-    client_states_.push_back(FTP_WAIT_LOGIN);
-    client_usernames_.push_back("");
-    client_current_paths_.push_back(root_path_);
-    send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
+  if (client_socket < 0) {
+    ESP_LOGE(TAG, "Accept failed: errno=%d (%s)", errno, strerror(errno));
+    return;
   }
+
+  // Set socket timeout
+  struct timeval timeout;      
+  timeout.tv_sec = 60;  // 60 seconds timeout
+  timeout.tv_usec = 0;
+  
+  if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
+    ESP_LOGW(TAG, "Failed to set socket timeout");
+  }
+
+  // Set non-blocking mode
+  int flags = fcntl(client_socket, F_GETFL, 0);
+  if (flags < 0 || fcntl(client_socket, F_SETFL, flags | O_NONBLOCK) < 0) {
+    ESP_LOGE(TAG, "Failed to set non-blocking mode");
+    close(client_socket);
+    return;
+  }
+
+  char client_ip[INET_ADDRSTRLEN];
+  inet_ntop(AF_INET, &(client_addr.sin_addr), client_ip, INET_ADDRSTRLEN);
+  ESP_LOGI(TAG, "New FTP client connected from %s:%d", client_ip, ntohs(client_addr.sin_port));
+
+  client_sockets_.push_back(client_socket);
+  client_states_.push_back(FTP_WAIT_LOGIN);
+  client_usernames_.push_back("");
+  client_current_paths_.push_back(root_path_);
+  send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
 }
 
 void FTPServer::handle_ftp_client(int client_socket) {
   char buffer[512];
+  
+  // Add explicit error handling for recv()
   int len = recv(client_socket, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
+  
   if (len > 0) {
     buffer[len] = '\0';
     std::string command(buffer);
     process_command(client_socket, command);
-  } else if (len == 0) {
-    ESP_LOGI(TAG, "FTP client disconnected");
-    close(client_socket);
-    auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
-    if (it != client_sockets_.end()) {
-      size_t index = it - client_sockets_.begin();
-      client_sockets_.erase(it);
-      client_states_.erase(client_states_.begin() + index);
-      client_usernames_.erase(client_usernames_.begin() + index);
-      client_current_paths_.erase(client_current_paths_.begin() + index);
+  } 
+  else if (len == 0) {
+    ESP_LOGI(TAG, "FTP client disconnected gracefully");
+    cleanup_client(client_socket);
+  }
+  else {
+    if (errno == EWOULDBLOCK || errno == EAGAIN) {
+      // No data available, not an error
+      return;
     }
-  } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
-    ESP_LOGW(TAG, "Socket error: %d", errno);
+    
+    ESP_LOGW(TAG, "Socket error %d: %s", errno, strerror(errno));
+    
+    if (errno == ECONNRESET || errno == ETIMEDOUT || errno == EPIPE) {
+      ESP_LOGI(TAG, "Client connection lost or timed out");
+      cleanup_client(client_socket);
+    }
+  }
+}
+
+void FTPServer::cleanup_client(int client_socket) {
+  close(client_socket);
+  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
+  if (it != client_sockets_.end()) {
+    size_t index = it - client_sockets_.begin();
+    client_sockets_.erase(it);
+    client_states_.erase(client_states_.begin() + index);
+    client_usernames_.erase(client_usernames_.begin() + index);
+    client_current_paths_.erase(client_current_paths_.begin() + index);
   }
 }
 
