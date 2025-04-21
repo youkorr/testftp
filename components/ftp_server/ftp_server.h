@@ -57,8 +57,8 @@ class FTPServer : public Component {
   std::vector<FTPClientState> client_states_;
   std::vector<std::string> client_usernames_;
   std::vector<std::string> client_current_paths_;
-  std::vector<uint32_t> client_last_activity_;
-  size_t max_clients_{5};  // Default max clients
+  std::vector<uint64_t> client_last_activity_;  // Changed to uint64_t for esp_timer
+  size_t max_clients_{5};
   static const uint32_t CLIENT_TIMEOUT = 300000;  // 5 minutes in milliseconds
 
   bool passive_mode_enabled_ = false;
