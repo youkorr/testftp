@@ -139,6 +139,28 @@ void FTPServer::dump_config() {
   ESP_LOGI(TAG, "  Server status: %s", is_running() ? "Running" : "Not running");
 }
 
+void FTPServer::cleanup_client(int client_socket) {
+  close(client_socket);
+  
+  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
+  if (it != client_sockets_.end()) {
+    size_t index = it - client_sockets_.begin();
+    client_sockets_.erase(it);
+    client_states_.erase(client_states_.begin() + index);
+    client_usernames_.erase(client_usernames_.begin() + index);
+    client_current_paths_.erase(client_current_paths_.begin() + index);
+    client_last_activity_.erase(client_last_activity_.begin() + index);
+  }
+
+  // Close data connection if in passive mode
+  if (passive_mode_enabled_ && passive_data_socket_ >= 0) {
+    close(passive_data_socket_);
+    passive_data_socket_ = -1;
+    passive_mode_enabled_ = false;
+  }
+}
+
+// Rest of your existing code remains the same...
 void FTPServer::handle_new_clients() {
   if (!has_available_slots()) {
     ESP_LOGW(TAG, "Maximum client connections reached, rejecting new connection");
