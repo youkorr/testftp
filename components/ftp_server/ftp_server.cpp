@@ -138,21 +138,30 @@ void FTPServer::dump_config() {
   ESP_LOGI(TAG, "  Username: %s", username_.c_str());
   ESP_LOGI(TAG, "  Server status: %s", is_running() ? "Running" : "Not running");
 }
-void FTPServer::remove_ftp_client(int client_socket) {
-  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
-  if (it != client_sockets_.end()) {
-    size_t index = std::distance(client_sockets_.begin(), it);
-    client_sockets_.erase(it);
+void FTPServer::handle_ftp_client(int client_socket) {
+  if (client_socket < 0) {
+    ESP_LOGW(TAG, "Invalid client socket: %d", client_socket);
+    return;
+  }
 
-    if (index < client_states_.size()) client_states_.erase(client_states_.begin() + index);
-    if (index < client_usernames_.size()) client_usernames_.erase(client_usernames_.begin() + index);
-    if (index < client_current_paths_.size()) client_current_paths_.erase(client_current_paths_.begin() + index);
+  char buffer[512];
+  int len = recv(client_socket, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
 
-    ESP_LOGI(TAG, "Cleaned up client socket: %d", client_socket);
-  } else {
-    ESP_LOGW(TAG, "Client socket %d not found in list", client_socket);
+  if (len > 0) {
+    buffer[len] = '\0';
+    std::string command(buffer);
+    process_command(client_socket, command);
+  } else if (len == 0 || errno == ENOTCONN || errno == 128) {
+    ESP_LOGI(TAG, "FTP client disconnected (socket: %d)", client_socket);
+    close(client_socket);
+    remove_ftp_client(client_socket);
+  } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
+    ESP_LOGW(TAG, "Socket error on socket %d: %d (%s)", client_socket, errno, strerror(errno));
+    close(client_socket);
+    remove_ftp_client(client_socket);
   }
 }
+
 void FTPServer::handle_new_clients() {
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
