@@ -38,6 +38,7 @@ class FTPServer : public Component {
  protected:
   void handle_new_clients();
   void handle_ftp_client(int client_socket);
+  void remove_ftp_client(int client_socket);
   void process_command(int client_socket, const std::string& command);
   void send_response(int client_socket, int code, const std::string& message);
   bool authenticate(const std::string& username, const std::string& password);
