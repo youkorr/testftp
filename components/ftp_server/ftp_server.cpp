@@ -156,49 +156,28 @@ void FTPServer::handle_new_clients() {
   }
 }
 
-void FTPServer::remove_ftp_client(int client_socket) {
-  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
-  if (it != client_sockets_.end()) {
-    size_t index = std::distance(client_sockets_.begin(), it);
-    client_sockets_.erase(it);
-
-    if (index < client_states_.size()) client_states_.erase(client_states_.begin() + index);
-    if (index < client_usernames_.size()) client_usernames_.erase(client_usernames_.begin() + index);
-    if (index < client_current_paths_.size()) client_current_paths_.erase(client_current_paths_.begin() + index);
-
-    ESP_LOGI(TAG, "Cleaned up client socket: %d", client_socket);
-  } else {
-    ESP_LOGW(TAG, "Client socket %d not found in list", client_socket);
-  }
-}
-
 void FTPServer::handle_ftp_client(int client_socket) {
-  if (client_socket < 0) {
-    ESP_LOGW(TAG, "Invalid client socket: %d", client_socket);
-    return;
-  }
-
   char buffer[512];
   int len = recv(client_socket, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
-
   if (len > 0) {
     buffer[len] = '\0';
     std::string command(buffer);
     process_command(client_socket, command);
-  }
-
-
-  } else if (len == 0 || errno == ENOTCONN) {  // <-- ici on capture aussi l’erreur 128
-    ESP_LOGI(TAG, "FTP client disconnected (socket: %d)", client_socket);
+  } else if (len == 0) {
+    ESP_LOGI(TAG, "FTP client disconnected");
     close(client_socket);
-    remove_ftp_client(client_socket);
+    auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
+    if (it != client_sockets_.end()) {
+      size_t index = it - client_sockets_.begin();
+      client_sockets_.erase(it);
+      client_states_.erase(client_states_.begin() + index);
+      client_usernames_.erase(client_usernames_.begin() + index);
+      client_current_paths_.erase(client_current_paths_.begin() + index);
+    }
   } else if (errno != EWOULDBLOCK && errno != EAGAIN) {
-    ESP_LOGW(TAG, "Socket error on socket %d: %d (%s)", client_socket, errno, strerror(errno));
-    close(client_socket);
-    remove_ftp_client(client_socket);
+    ESP_LOGW(TAG, "Socket error: %d", errno);
   }
 }
-
 
 void FTPServer::process_command(int client_socket, const std::string& command) {
   ESP_LOGI(TAG, "FTP command: %s", command.c_str());
@@ -600,7 +579,6 @@ bool FTPServer::start_passive_mode(int client_socket) {
   return true;
 }
 
-
 int FTPServer::open_data_connection(int client_socket) {
   if (passive_data_socket_ == -1) {
     return -1;
@@ -793,6 +771,39 @@ bool FTPServer::is_running() const {
 
 }  // namespace ftp_server
 }  // namespace esphome
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
