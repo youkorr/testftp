@@ -145,7 +145,7 @@ void FTPServer::handle_new_clients() {
     return;
   }
 
-  cleanup_inactive_clients();  // Clean up inactive clients before accepting new ones
+  cleanup_inactive_clients();
 
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
@@ -153,23 +153,20 @@ void FTPServer::handle_new_clients() {
   int client_socket = accept(ftp_server_socket_, (struct sockaddr *)&client_addr, &client_len);
   if (client_socket < 0) {
     if (errno == EAGAIN || errno == EWOULDBLOCK) {
-      // No pending connections, not an error
       return;
     }
     ESP_LOGE(TAG, "Accept failed: errno=%d (%s)", errno, strerror(errno));
     return;
   }
 
-  // Set socket timeout
   struct timeval timeout;      
-  timeout.tv_sec = 60;  // 60 seconds timeout
+  timeout.tv_sec = 60;
   timeout.tv_usec = 0;
   
   if (setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout, sizeof(timeout)) < 0) {
     ESP_LOGW(TAG, "Failed to set socket timeout");
   }
 
-  // Set non-blocking mode
   int flags = fcntl(client_socket, F_GETFL, 0);
   if (flags < 0 || fcntl(client_socket, F_SETFL, flags | O_NONBLOCK) < 0) {
     ESP_LOGE(TAG, "Failed to set non-blocking mode");
@@ -185,18 +182,18 @@ void FTPServer::handle_new_clients() {
   client_states_.push_back(FTP_WAIT_LOGIN);
   client_usernames_.push_back("");
   client_current_paths_.push_back(root_path_);
-  client_last_activity_.push_back(millis());
+  client_last_activity_.push_back(esphome::millis());  // Use esphome::millis()
   send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
 }
 
 void FTPServer::cleanup_inactive_clients() {
-  uint32_t current_time = millis();
+  uint32_t current_time = esphome::millis();  // Use esphome::millis()
   
   for (size_t i = 0; i < client_sockets_.size(); i++) {
     if (current_time - client_last_activity_[i] > CLIENT_TIMEOUT) {
       ESP_LOGI(TAG, "Cleaning up inactive client");
       cleanup_client(client_sockets_[i]);
-      i--;  // Adjust index since vector size changed
+      i--;
     }
   }
 }
@@ -206,11 +203,10 @@ void FTPServer::handle_ftp_client(int client_socket) {
   
   int len = recv(client_socket, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
   
-  // Update last activity time for the client
   auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
   if (it != client_sockets_.end()) {
     size_t index = it - client_sockets_.begin();
-    client_last_activity_[index] = millis();
+    client_last_activity_[index] = esphome::millis();  // Use esphome::millis()
   }
   
   if (len > 0) {
@@ -235,7 +231,6 @@ void FTPServer::handle_ftp_client(int client_socket) {
     }
   }
 }
-
 void FTPServer::process_command(int client_socket, const std::string& command) {
   ESP_LOGI(TAG, "FTP command: %s", command.c_str());
   std::string cmd_str = command;
