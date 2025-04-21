@@ -28,6 +28,7 @@ class FTPServer : public Component {
   void set_username(const std::string &username) { username_ = username; }
   void set_password(const std::string &password) { password_ = password; }
   void set_root_path(const std::string &root_path) { root_path_ = root_path; }
+  void set_max_clients(size_t max_clients) { max_clients_ = max_clients; }
 
   bool is_running() const;
 
@@ -35,7 +36,8 @@ class FTPServer : public Component {
   void handle_new_clients();
   void handle_ftp_client(int client_socket);
   void remove_ftp_client(int client_socket);
-  void cleanup_client(int client_socket);  // Added cleanup_client declaration
+  void cleanup_client(int client_socket);
+  void cleanup_inactive_clients();
   void process_command(int client_socket, const std::string& command);
   void send_response(int client_socket, int code, const std::string& message);
   bool authenticate(const std::string& username, const std::string& password);
@@ -43,6 +45,7 @@ class FTPServer : public Component {
   void list_names(int client_socket, const std::string& path);
   void start_file_upload(int client_socket, const std::string& path);
   void start_file_download(int client_socket, const std::string& path);
+  bool has_available_slots() const { return client_sockets_.size() < max_clients_; }
 
   uint16_t port_{21};
   std::string username_{"admin"};
@@ -54,6 +57,9 @@ class FTPServer : public Component {
   std::vector<FTPClientState> client_states_;
   std::vector<std::string> client_usernames_;
   std::vector<std::string> client_current_paths_;
+  std::vector<uint32_t> client_last_activity_;
+  size_t max_clients_{5};  // Default max clients
+  static const uint32_t CLIENT_TIMEOUT = 300000;  // 5 minutes in milliseconds
 
   bool passive_mode_enabled_ = false;
   int passive_data_socket_ = -1;
@@ -69,6 +75,7 @@ class FTPServer : public Component {
 
 }  // namespace ftp_server
 }  // namespace esphome
+
 
 
 
