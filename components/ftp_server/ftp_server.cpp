@@ -140,12 +140,22 @@ void FTPServer::dump_config() {
 }
 
 void FTPServer::handle_new_clients() {
+  if (!has_available_slots()) {
+    ESP_LOGW(TAG, "Maximum client connections reached, rejecting new connection");
+    return;
+  }
+
+  cleanup_inactive_clients();  // Clean up inactive clients before accepting new ones
+
   struct sockaddr_in client_addr;
   socklen_t client_len = sizeof(client_addr);
   
-  // Add error checking for accept()
   int client_socket = accept(ftp_server_socket_, (struct sockaddr *)&client_addr, &client_len);
   if (client_socket < 0) {
+    if (errno == EAGAIN || errno == EWOULDBLOCK) {
+      // No pending connections, not an error
+      return;
+    }
     ESP_LOGE(TAG, "Accept failed: errno=%d (%s)", errno, strerror(errno));
     return;
   }
@@ -175,14 +185,33 @@ void FTPServer::handle_new_clients() {
   client_states_.push_back(FTP_WAIT_LOGIN);
   client_usernames_.push_back("");
   client_current_paths_.push_back(root_path_);
+  client_last_activity_.push_back(millis());
   send_response(client_socket, 220, "Welcome to ESPHome FTP Server");
+}
+
+void FTPServer::cleanup_inactive_clients() {
+  uint32_t current_time = millis();
+  
+  for (size_t i = 0; i < client_sockets_.size(); i++) {
+    if (current_time - client_last_activity_[i] > CLIENT_TIMEOUT) {
+      ESP_LOGI(TAG, "Cleaning up inactive client");
+      cleanup_client(client_sockets_[i]);
+      i--;  // Adjust index since vector size changed
+    }
+  }
 }
 
 void FTPServer::handle_ftp_client(int client_socket) {
   char buffer[512];
   
-  // Add explicit error handling for recv()
   int len = recv(client_socket, buffer, sizeof(buffer) - 1, MSG_DONTWAIT);
+  
+  // Update last activity time for the client
+  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
+  if (it != client_sockets_.end()) {
+    size_t index = it - client_sockets_.begin();
+    client_last_activity_[index] = millis();
+  }
   
   if (len > 0) {
     buffer[len] = '\0';
@@ -195,7 +224,6 @@ void FTPServer::handle_ftp_client(int client_socket) {
   }
   else {
     if (errno == EWOULDBLOCK || errno == EAGAIN) {
-      // No data available, not an error
       return;
     }
     
@@ -205,18 +233,6 @@ void FTPServer::handle_ftp_client(int client_socket) {
       ESP_LOGI(TAG, "Client connection lost or timed out");
       cleanup_client(client_socket);
     }
-  }
-}
-
-void FTPServer::cleanup_client(int client_socket) {
-  close(client_socket);
-  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
-  if (it != client_sockets_.end()) {
-    size_t index = it - client_sockets_.begin();
-    client_sockets_.erase(it);
-    client_states_.erase(client_states_.begin() + index);
-    client_usernames_.erase(client_usernames_.begin() + index);
-    client_current_paths_.erase(client_current_paths_.begin() + index);
   }
 }
 
