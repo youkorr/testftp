@@ -183,17 +183,10 @@ void FTPServer::handle_ftp_client(int client_socket) {
 
   if (len > 0) {
     buffer[len] = '\0';
-  
-    // Affichage sûr pour débogage : si c'est du texte lisible, on l'affiche normalement
-    if (isprint(buffer[0])) {
-      ESP_LOGI(TAG, "FTP raw input (%d bytes): %.*s", len, len, buffer);
-    } else {
-      ESP_LOG_BUFFER_HEXDUMP(TAG, "FTP binary input", buffer, len, ESP_LOG_INFO);
-    }
-  
     std::string command(buffer);
     process_command(client_socket, command);
   }
+
 
   } else if (len == 0 || errno == ENOTCONN) {  // <-- ici on capture aussi l’erreur 128
     ESP_LOGI(TAG, "FTP client disconnected (socket: %d)", client_socket);
