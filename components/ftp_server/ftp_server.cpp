@@ -156,6 +156,22 @@ void FTPServer::handle_new_clients() {
   }
 }
 
+void FTPServer::remove_ftp_client(int client_socket) {
+  auto it = std::find(client_sockets_.begin(), client_sockets_.end(), client_socket);
+  if (it != client_sockets_.end()) {
+    size_t index = std::distance(client_sockets_.begin(), it);
+    client_sockets_.erase(it);
+
+    if (index < client_states_.size()) client_states_.erase(client_states_.begin() + index);
+    if (index < client_usernames_.size()) client_usernames_.erase(client_usernames_.begin() + index);
+    if (index < client_current_paths_.size()) client_current_paths_.erase(client_current_paths_.begin() + index);
+
+    ESP_LOGI(TAG, "Cleaned up client socket: %d", client_socket);
+  } else {
+    ESP_LOGW(TAG, "Client socket %d not found in list", client_socket);
+  }
+}
+
 void FTPServer::handle_ftp_client(int client_socket) {
   if (client_socket < 0) {
     ESP_LOGW(TAG, "Invalid client socket: %d", client_socket);
